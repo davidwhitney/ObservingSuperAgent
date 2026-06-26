@@ -1,0 +1,44 @@
+{
+  "memory": {
+    "type": "disk",
+    "directory": ".osa-memory"
+  },
+  "llm": {
+    "provider": "fake"
+  },
+  "mcp": {
+    "github": { "enabled": true },
+    "servers": []
+  },
+  "agent": {
+    "provider": "fake",
+    "github": { "assignee": "copilot" }
+  },
+  "comms": [{ "type": "console" }],
+  "api": {
+    "host": "0.0.0.0",
+    "port": 8787
+  },
+  "polling": {},
+
+  "_jira_example": {
+    "_comment": "Copy this block to a top-level \"jira\" key and fill in to enable the JIRA connector.",
+    "baseUrl": "https://your-org.atlassian.net",
+    "email": "you@example.com",
+    "apiToken": "set-via-OSA_JIRA__APITOKEN-instead",
+    "mode": "opt-in",
+    "projectIds": ["ENG"],
+    "excludedProjectIds": [],
+    "readyTag": "agent-ready",
+    "actingTag": "agent-acting",
+    "completeTag": "agent-complete",
+    "rejectedTag": "reviewer-rejected",
+    "readyColumns": ["Ready for Agent"],
+    "actingColumn": "In Progress",
+    "completeColumn": "In Review",
+    "doneColumn": "Done",
+    "projectConfig": {
+      "OPS": { "readyColumns": ["Automate"], "actingColumn": "Working", "completeColumn": "Review", "doneColumn": "Shipped" }
+    }
+  }
+}
