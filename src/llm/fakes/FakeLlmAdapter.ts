@@ -22,6 +22,7 @@ export class FakeLlmAdapter implements LlmAdapter {
 
 const defaultResponder: FakeResponder = () =>
   JSON.stringify({
+    action: 'plan',
     repositories: ['octo-org/sample-repo'],
     prompt: 'Implement the requested change and open a pull request.',
     summary: 'Single-repo change.',

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { Planner, parsePlan, PlanningError } from '../../src/llm/Planner';
+import { Planner, parseOutcome, PlanningError } from '../../src/llm/Planner';
 import { FakeLlmAdapter } from '../../src/llm/fakes/FakeLlmAdapter';
 import type { WorkItem } from '../../src/domain/types';
 
@@ -12,31 +12,40 @@ const item: WorkItem = {
   description: 'Body',
   tags: ['agent-ready'],
   status: 'To Do',
+  comments: [],
 };
 
-describe('parsePlan', () => {
+describe('parseOutcome', () => {
   it('extracts a JSON plan even with surrounding prose', () => {
-    const plan = parsePlan('Here is the plan:\n{"repositories":["a/b"],"prompt":"go"}\nThanks!');
-    expect(plan).toEqual({ repositories: ['a/b'], prompt: 'go' });
+    const outcome = parseOutcome('Here is the plan:\n{"repositories":["a/b"],"prompt":"go"}\nThanks!');
+    expect(outcome).toEqual({ kind: 'plan', plan: { repositories: ['a/b'], prompt: 'go' } });
   });
 
-  it('rejects responses without a valid plan', () => {
-    expect(() => parsePlan('no json here')).toThrow(PlanningError);
-    expect(() => parsePlan('{"repositories":[],"prompt":"x"}')).toThrow(PlanningError);
-    expect(() => parsePlan('{"prompt":"missing repos"}')).toThrow(PlanningError);
+  it('parses a clarification request', () => {
+    const outcome = parseOutcome('{"action":"ask","questions":["Which repo?","What is the acceptance criteria?"]}');
+    expect(outcome).toEqual({ kind: 'questions', questions: ['Which repo?', 'What is the acceptance criteria?'] });
+  });
+
+  it('rejects responses without a valid plan or questions', () => {
+    expect(() => parseOutcome('no json here')).toThrow(PlanningError);
+    expect(() => parseOutcome('{"repositories":[],"prompt":"x"}')).toThrow(PlanningError);
+    expect(() => parseOutcome('{"prompt":"missing repos"}')).toThrow(PlanningError);
   });
 });
 
 describe('Planner', () => {
-  it('produces a plan and forwards MCP servers and item context to the LLM', async () => {
+  it('produces a plan and forwards MCP servers + the conversation to the LLM', async () => {
     const llm = new FakeLlmAdapter();
     const planner = new Planner(llm, [{ name: 'github', url: 'https://mcp' }]);
 
-    const plan = await planner.plan(item);
+    const withComments: WorkItem = { ...item, comments: [{ author: 'alice', body: 'use the api repo', createdAt: '' }] };
+    const outcome = await planner.plan(withComments);
 
-    expect(plan.repositories).toEqual(['octo-org/sample-repo']);
+    expect(outcome).toEqual({ kind: 'plan', plan: { repositories: ['octo-org/sample-repo'], prompt: 'Implement the requested change and open a pull request.', summary: 'Single-repo change.' } });
     expect(llm.requests[0]?.mcpServers?.[0]?.name).toBe('github');
-    expect(llm.requests[0]?.messages.at(-1)?.content).toContain('ENG-1');
+    const userMsg = llm.requests[0]!.messages.at(-1)!.content;
+    expect(userMsg).toContain('ENG-1');
+    expect(userMsg).toContain('alice: use the api repo'); // comment thread is included
   });
 
   it('tells the model the owner and to verify repos via tools (never invent)', async () => {

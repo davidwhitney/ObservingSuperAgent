@@ -53,7 +53,14 @@ if (doPlan && !doDispatch) {
   for (const connector of system.connectors) {
     for (const item of await connector.RetrieveWorkReadyForDispatch()) {
       try {
-        const plan = await system.planner.plan(item);
+        const outcome = await system.planner.plan(item);
+        if (outcome.kind === 'questions') {
+          console.log(`Clarification needed for ${item.key ?? item.id}:`);
+          outcome.questions.forEach((q, i) => console.log(`  ${i + 1}. ${q}`));
+          console.log('');
+          continue;
+        }
+        const plan = outcome.plan;
         console.log(`Plan for ${item.key ?? item.id}:`);
         console.log(`  repositories: ${plan.repositories.join(', ')}`);
         if (plan.summary) console.log(`  summary: ${plan.summary}`);

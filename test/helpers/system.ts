@@ -37,5 +37,10 @@ export function buildTestSystem(options: TestSystemOptions = {}) {
 
 /** A responder that returns a valid plan for the given repositories. */
 export function planResponder(repositories: string[], prompt = 'Do the work.'): FakeResponder {
-  return () => JSON.stringify({ repositories, prompt, summary: 'test plan' });
+  return () => JSON.stringify({ action: 'plan', repositories, prompt, summary: 'test plan' });
+}
+
+/** A responder that asks the given clarifying questions instead of planning. */
+export function questionsResponder(...questions: string[]): FakeResponder {
+  return () => JSON.stringify({ action: 'ask', questions });
 }

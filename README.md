@@ -18,9 +18,11 @@ JIRA ─▶ WorkTrackingConnector ─▶ Orchestrator ─▶ Planner (LLM + MCP)
 1. **Retrieve** — `WorkTrackingConnector.RetrieveWorkReadyForDispatch()` pulls items matching the
    `agent-ready` tag (configurable) or a ready column, honouring opt-in/opt-out scope, project
    exclusions, and per-project overrides.
-2. **Plan** — the `Planner` invokes an `LlmAdapter` to produce `{ repositories, prompt }`, recorded
-   in `AgentMemory`. With Foundry Local, the configured MCP servers (GitHub by default) are offered
-   to the model as tools via `McpClientPool`, so it can browse repositories before planning.
+2. **Plan** — the `Planner` invokes an `LlmAdapter` with the full ticket context (description **and
+   the comment thread**) to produce `{ repositories, prompt }`, recorded in `AgentMemory`. With
+   Foundry Local, the configured MCP servers (GitHub by default) are offered to the model as tools
+   via `McpClientPool`, so it can browse repositories before planning. If the ticket lacks the
+   detail needed to plan, the planner instead **asks for clarification** (see below).
 3. **Dispatch** — an `AgentConnector` (GitHub Copilot by default) creates an issue per repository
    and assigns it to the agent (via the GitHub MCP `assign_copilot_to_issue` tool when available).
    The ticket is then moved to the **acting** state: `agent-ready` → `agent-acting` (and/or a
@@ -29,6 +31,17 @@ JIRA ─▶ WorkTrackingConnector ─▶ Orchestrator ─▶ Planner (LLM + MCP)
    the rest of its lifecycle: PR **ready for review** → `agent-complete` + completion column (e.g.
    `In Review`); PR **merged** → done column (e.g. `Done`); PR **closed unmerged** → done column +
    `reviewer-rejected` tag. In-review records keep being polled until the PR resolves.
+
+### Clarification loop
+
+The planner can hold a loose conversation on the ticket before committing to a plan. If it lacks
+information (which repo, unclear scope/acceptance criteria), instead of guessing it posts its
+questions as a comment, the item is recorded as **`clarifying`** (kept `agent-ready`, not
+dispatched), and nothing else happens until a human replies. The next cycle only re-evaluates an
+item once it has **new comments** since the questions were asked — at which point the planner sees
+the whole thread (its questions + the answers) and either asks again or proceeds to dispatch. So:
+tag a vague ticket `agent-ready`, answer the agent's follow-up questions in the comments, and it
+plans better before dispatching.
 
 ## Requirements
 

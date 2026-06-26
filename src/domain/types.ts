@@ -18,6 +18,13 @@ export interface WorkItemRef {
   url?: string;
 }
 
+/** A comment on a work item (part of the conversation the planner reads). */
+export interface Comment {
+  author: string;
+  body: string;
+  createdAt: string;
+}
+
 /** A unit of work retrieved from a work-tracking tool. */
 export interface WorkItem extends WorkItemRef {
   title: string;
@@ -26,6 +33,8 @@ export interface WorkItem extends WorkItemRef {
   tags: string[];
   /** Current column / status name. */
   status: string;
+  /** Comments in chronological order (the conversation so far). */
+  comments: Comment[];
 }
 
 /**
@@ -81,11 +90,20 @@ export interface AgentRunStatus {
  */
 export type DispatchRecordStatus =
   | 'planned'
+  | 'clarifying'
   | 'dispatched'
   | 'completed'
   | 'done'
   | 'rejected'
   | 'failed';
+
+/** State of an open clarification request the planner posted on the item. */
+export interface Clarification {
+  questions: string[];
+  /** Comment count expected after we asked; more than this means a human replied. */
+  commentCountAtAsk: number;
+  askedAt: string;
+}
 
 /** One agent dispatch (a single repository) within a dispatch record. */
 export interface DispatchRun {
@@ -112,12 +130,15 @@ export interface DispatchRecord {
   plan: DispatchPlan;
   runs: DispatchRun[];
   status: DispatchRecordStatus;
+  /** Present while status is 'clarifying' — the open question(s) awaiting a reply. */
+  clarification?: Clarification;
   createdAt: string;
   updatedAt: string;
 }
 
 export type CommEventType =
   | 'planned'
+  | 'asked'
   | 'dispatched'
   | 'linked'
   | 'completed'

@@ -17,8 +17,13 @@ export interface JiraIssue {
     labels?: string[];
     status?: { name?: string };
     project?: { id?: string; key?: string };
+    comment?: {
+      comments?: Array<{ author?: { displayName?: string }; body?: unknown; created?: string }>;
+    };
   };
 }
+
+const ISSUE_FIELDS = ['summary', 'description', 'labels', 'status', 'project', 'comment'];
 
 interface JiraTransition {
   id: string;
@@ -46,11 +51,7 @@ export class JiraClient {
 
   /** Run a JQL search and return the matching issues. */
   async search(jql: string, maxResults = 50): Promise<JiraIssue[]> {
-    const body = {
-      jql,
-      maxResults,
-      fields: ['summary', 'description', 'labels', 'status', 'project'],
-    };
+    const body = { jql, maxResults, fields: ISSUE_FIELDS };
     const result = (await this.http.request('POST', '/rest/api/3/search/jql', body)) as {
       issues?: JiraIssue[];
     };
@@ -59,7 +60,7 @@ export class JiraClient {
 
   /** Fetch a single issue, or null if it no longer exists (404). */
   async getIssue(issueId: string): Promise<JiraIssue | null> {
-    const path = `/rest/api/3/issue/${issueId}?fields=summary,description,labels,status,project`;
+    const path = `/rest/api/3/issue/${issueId}?fields=${ISSUE_FIELDS.join(',')}`;
     try {
       return (await this.http.request('GET', path)) as JiraIssue;
     } catch (err) {

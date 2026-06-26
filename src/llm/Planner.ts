@@ -17,8 +17,17 @@ export interface PlanningContext {
 }
 
 /**
- * Turns a work item into a {@link DispatchPlan} (repositories + agent prompt)
- * by invoking an {@link LlmAdapter}, giving it MCP access for extra context.
+ * The result of evaluating an item: either a ready-to-dispatch plan, or a set
+ * of clarifying questions to post back to the human before planning.
+ */
+export type PlanningOutcome =
+  | { kind: 'plan'; plan: DispatchPlan }
+  | { kind: 'questions'; questions: string[] };
+
+/**
+ * Evaluates a work item with an {@link LlmAdapter} (and MCP access). Either
+ * produces a {@link DispatchPlan} or — when the ticket lacks the detail needed
+ * to plan confidently — a list of clarifying questions for the human.
  */
 export class Planner {
   constructor(
@@ -27,7 +36,7 @@ export class Planner {
     private readonly context: PlanningContext = {},
   ) {}
 
-  async plan(item: WorkItem): Promise<DispatchPlan> {
+  async plan(item: WorkItem): Promise<PlanningOutcome> {
     const response = await this.llm.complete({
       messages: [
         { role: 'system', content: this.systemPrompt() },
@@ -36,7 +45,7 @@ export class Planner {
       mcpServers: this.mcpServers,
       responseFormat: 'json',
     });
-    return parsePlan(response.content);
+    return parseOutcome(response.content);
   }
 
   private systemPrompt(): string {
@@ -44,8 +53,8 @@ export class Planner {
     const hasGitHubTools = this.mcpServers.some((s) => s.name === 'github');
     const lines = [
       'You are the planning stage of an autonomous engineering assistant.',
-      'Given a work-tracking item, decide which GitHub repositories must change and write a',
-      'robust, self-contained prompt for a downstream coding agent that has access to those repositories.',
+      'Given a work-tracking item (its description AND the full comment thread), decide which GitHub',
+      'repositories must change and write a robust, self-contained prompt for a downstream coding agent.',
     ];
     if (githubOwner) {
       lines.push(
@@ -59,14 +68,21 @@ export class Planner {
         } and confirm the chosen repository actually exists. Never invent or guess a repository name — only return repositories you have verified exist via the tools.`,
       );
     }
-    lines.push('Respond with ONLY a JSON object of the form:');
-    lines.push('{ "repositories": ["owner/name", ...], "prompt": "...", "summary": "..." }');
+    lines.push(
+      'If the ticket lacks information you need to plan confidently (which repository, unclear scope or',
+      'acceptance criteria, ambiguity), do NOT guess — ask the human. The comment thread is the conversation:',
+      'if your earlier questions have since been answered there, proceed to a plan.',
+      'Respond with ONLY a JSON object, either a plan:',
+      '{ "action": "plan", "repositories": ["owner/name", ...], "prompt": "...", "summary": "..." }',
+      'or a request for clarification:',
+      '{ "action": "ask", "questions": ["...", "..."] }',
+    );
     return lines.join(' ');
   }
 }
 
 function describeItem(item: WorkItem): string {
-  return [
+  const lines = [
     `Work item: ${item.key ?? item.id}`,
     `Project: ${item.projectId}`,
     `Title: ${item.title}`,
@@ -75,11 +91,18 @@ function describeItem(item: WorkItem): string {
     '',
     'Description:',
     item.description || '(no description)',
-  ].join('\n');
+  ];
+  if (item.comments.length > 0) {
+    lines.push('', 'Comment thread (oldest first):');
+    for (const c of item.comments) {
+      lines.push(`- ${c.author}${c.createdAt ? ` (${c.createdAt})` : ''}: ${c.body}`);
+    }
+  }
+  return lines.join('\n');
 }
 
-/** Extract and validate the plan JSON, tolerating surrounding prose. */
-export function parsePlan(content: string): DispatchPlan {
+/** Extract and validate the planner outcome JSON, tolerating surrounding prose. */
+export function parseOutcome(content: string): PlanningOutcome {
   const json = extractJsonObject(content);
   if (json === undefined) {
     throw new PlanningError('LLM response did not contain a JSON object');
@@ -90,11 +113,19 @@ export function parsePlan(content: string): DispatchPlan {
   } catch (err) {
     throw new PlanningError(`LLM response was not valid JSON: ${(err as Error).message}`);
   }
-  const result = planSchema.safeParse(parsed);
-  if (!result.success) {
-    throw new PlanningError(`LLM plan failed validation: ${result.error.message}`);
+
+  const obj = parsed as Record<string, unknown>;
+  // Treat it as a clarification request when questions are present (unless it explicitly plans).
+  if (Array.isArray(obj.questions) && obj.action !== 'plan') {
+    const questions = obj.questions.filter((q): q is string => typeof q === 'string' && q.trim().length > 0);
+    if (questions.length > 0) return { kind: 'questions', questions };
   }
-  return result.data;
+
+  const result = planSchema.safeParse(obj);
+  if (!result.success) {
+    throw new PlanningError(`LLM outcome failed validation: ${result.error.message}`);
+  }
+  return { kind: 'plan', plan: result.data };
 }
 
 function extractJsonObject(content: string): string | undefined {

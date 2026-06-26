@@ -28,6 +28,7 @@ const item: WorkItem = {
   description: 'Add retry logic to the client',
   tags: ['agent-ready'],
   status: 'To Do',
+  comments: [],
 };
 
 describe('FoundryLocalAdapter', () => {
@@ -56,8 +57,8 @@ describe('FoundryLocalAdapter', () => {
       { fetchFn: fn },
     );
 
-    const plan = await new Planner(adapter).plan(item);
-    expect(plan.repositories).toEqual(['acme/api']);
+    const outcome = await new Planner(adapter).plan(item);
+    expect(outcome).toEqual({ kind: 'plan', plan: { repositories: ['acme/api'], prompt: 'add retries' } });
   });
 
   it('errors clearly when endpoint or model is missing', async () => {

@@ -81,6 +81,11 @@ export class JiraConnector implements WorkTrackingConnector, LifecyclePolicy, Re
       description: adfToText(issue.fields.description),
       tags: issue.fields.labels ?? [],
       status: issue.fields.status?.name ?? '',
+      comments: (issue.fields.comment?.comments ?? []).map((c) => ({
+        author: c.author?.displayName ?? 'unknown',
+        body: adfToText(c.body),
+        createdAt: c.created ?? '',
+      })),
     };
   }
 }

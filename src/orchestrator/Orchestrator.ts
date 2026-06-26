@@ -4,7 +4,7 @@ import type { CommunicationAdapter } from '../comms/CommunicationAdapter';
 import type { Planner } from '../llm/Planner';
 import { AgentMemory, recordIdFor } from '../memory/AgentMemory';
 import { expectedAnnotationFor } from './lifecycle';
-import type { DispatchRecord, DispatchRun, WorkItem, WorkItemRef } from '../domain/types';
+import type { DispatchPlan, DispatchRecord, DispatchRun, WorkItem, WorkItemRef } from '../domain/types';
 
 export interface OrchestratorDeps {
   connectors: WorkTrackingConnector[];
@@ -17,32 +17,53 @@ export interface OrchestratorDeps {
 export interface DispatchSummary {
   considered: number;
   skipped: number;
+  /** Items the planner asked clarifying questions about (awaiting a reply). */
+  asked: number;
   dispatched: number;
   failed: number;
 }
 
 /**
- * Runs one dispatch cycle: pull ready work from every connector, skip items
- * already acted on, plan each new item, record the plan, dispatch an agent per
- * repository, and annotate the source ticket.
+ * Runs one dispatch cycle: pull ready work, skip items already acted on, and
+ * evaluate each new (or newly-answered) item. The planner either asks for
+ * clarification — which we post to the ticket and revisit once a human replies —
+ * or returns a plan, which we record, dispatch, and annotate onto the ticket.
  */
 export class Orchestrator {
   constructor(private readonly deps: OrchestratorDeps) {}
 
   async runDispatchCycle(): Promise<DispatchSummary> {
-    const summary: DispatchSummary = { considered: 0, skipped: 0, dispatched: 0, failed: 0 };
+    const summary: DispatchSummary = { considered: 0, skipped: 0, asked: 0, dispatched: 0, failed: 0 };
 
     for (const connector of this.deps.connectors) {
       const items = await connector.RetrieveWorkReadyForDispatch();
       for (const item of items) {
         summary.considered += 1;
-        if (await this.deps.memory.hasActedOn(item)) {
-          summary.skipped += 1;
+
+        const existing = await this.deps.memory.findByWorkItem(item);
+        if (existing && existing.status !== 'clarifying') {
+          summary.skipped += 1; // already dispatched / terminal
           continue;
         }
+        if (existing?.status === 'clarifying' && !hasNewReply(item, existing)) {
+          summary.skipped += 1; // still waiting on a human reply
+          continue;
+        }
+
         try {
-          await this.dispatchItem(connector, item);
-          summary.dispatched += 1;
+          const outcome = await this.deps.planner.plan(item);
+          if (outcome.kind === 'questions') {
+            await this.recordClarification(connector, item, outcome.questions);
+            await this.deps.comms.notify({
+              type: 'asked',
+              workItemKey: item.key,
+              message: `Asked for clarification (${outcome.questions.length} question(s))`,
+            });
+            summary.asked += 1;
+          } else {
+            await this.dispatchItem(connector, item, outcome.plan);
+            summary.dispatched += 1;
+          }
         } catch (err) {
           summary.failed += 1;
           await this.onFailure(item, err);
@@ -53,11 +74,33 @@ export class Orchestrator {
     return summary;
   }
 
-  private async dispatchItem(connector: WorkTrackingConnector, item: WorkItem): Promise<void> {
+  /** Post the planner's questions to the ticket and record a 'clarifying' state. */
+  private async recordClarification(
+    connector: WorkTrackingConnector,
+    item: WorkItem,
+    questions: string[],
+  ): Promise<void> {
     const ref = toRef(item);
-    const plan = await this.deps.planner.plan(item);
+    const countBefore = item.comments.length;
+    await connector.AnnotateItem(ref, { comment: clarificationComment(questions) });
 
-    // Record the established plan + repositories before dispatching anything.
+    const record = this.deps.memory.newRecord({
+      id: recordIdFor(ref),
+      connector: connector.name,
+      workItem: ref,
+      projectId: ref.projectId,
+      plan: { repositories: [], prompt: '' },
+      runs: [],
+      status: 'clarifying',
+      clarification: { questions, commentCountAtAsk: countBefore + 1, askedAt: '' },
+    });
+    record.clarification!.askedAt = record.createdAt;
+    await this.deps.memory.save(record);
+  }
+
+  private async dispatchItem(connector: WorkTrackingConnector, item: WorkItem, plan: DispatchPlan): Promise<void> {
+    const ref = toRef(item);
+
     const record = this.deps.memory.newRecord({
       id: recordIdFor(ref),
       connector: connector.name,
@@ -91,8 +134,6 @@ export class Orchestrator {
     record.status = 'dispatched';
     await this.deps.memory.save(record);
 
-    // Mark the item as picked up: drop the ready tag, add the acting tag /
-    // move columns (per connector policy), and leave a linking comment.
     const acting = expectedAnnotationFor(connector, ref, 'dispatched') ?? {};
     await connector.AnnotateItem(ref, { ...acting, comment: dispatchComment(record) });
     await this.deps.comms.notify({
@@ -119,6 +160,11 @@ export class Orchestrator {
   }
 }
 
+/** True if the item has gained comments since we last asked for clarification. */
+function hasNewReply(item: WorkItem, record: DispatchRecord): boolean {
+  return item.comments.length > (record.clarification?.commentCountAtAsk ?? 0);
+}
+
 export function toRef(item: WorkItem): WorkItemRef {
   return {
     connector: item.connector,
@@ -127,6 +173,15 @@ export function toRef(item: WorkItem): WorkItemRef {
     key: item.key,
     url: item.url,
   };
+}
+
+function clarificationComment(questions: string[]): string {
+  return [
+    '🤖 Before I can dispatch this, I need some clarification:',
+    ...questions.map((q, i) => `${i + 1}. ${q}`),
+    '',
+    "Reply on this ticket and I'll re-evaluate on the next run.",
+  ].join('\n');
 }
 
 function dispatchComment(record: DispatchRecord): string {

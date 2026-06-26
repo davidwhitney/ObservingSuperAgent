@@ -10,7 +10,7 @@ import { loadConfig } from '../src/config/load';
 import { buildFromConfig } from '../src/composition/buildFromConfig';
 import { ensureFoundryLocal } from '../src/llm/FoundryLocalLauncher';
 import { JiraClient } from '../src/worktracking/jira/JiraClient';
-import { Orchestrator, toRef } from '../src/orchestrator/Orchestrator';
+import { Orchestrator } from '../src/orchestrator/Orchestrator';
 import { recordIdFor } from '../src/memory/AgentMemory';
 import type { Planner } from '../src/llm/Planner';
 
@@ -94,9 +94,13 @@ console.log(`  created ${created.key} (id ${created.id})`);
 const realPlanner = system.planner;
 const pinnedPlanner = {
   plan: async (item: Parameters<Planner['plan']>[0]) => {
-    const plan = await realPlanner.plan(item);
-    console.log(`  planner proposed repos: ${plan.repositories.join(', ')}`);
-    return { ...plan, repositories: [REPO] };
+    const outcome = await realPlanner.plan(item);
+    if (outcome.kind === 'questions') {
+      console.log(`  planner asked for clarification: ${outcome.questions.join(' | ')}`);
+      return outcome;
+    }
+    console.log(`  planner proposed repos: ${outcome.plan.repositories.join(', ')}`);
+    return { kind: 'plan' as const, plan: { ...outcome.plan, repositories: [REPO] } };
   },
 } as Planner;
 
@@ -112,7 +116,7 @@ console.log('Dispatching…');
 const dispatch = await orchestrator.runDispatchCycle();
 console.log('  dispatch summary:', dispatch);
 
-const recordId = recordIdFor(toRef({ ...created, connector: 'jira', projectId: PROJECT, title: '', description: '', tags: [], status: '' }));
+const recordId = recordIdFor({ connector: 'jira', projectId: PROJECT, id: created.id });
 let record = await system.memory.get(recordId);
 if (!record || record.status !== 'dispatched') {
   console.log('Item was not dispatched (already acted on, or planning/selection failed). Stopping.');

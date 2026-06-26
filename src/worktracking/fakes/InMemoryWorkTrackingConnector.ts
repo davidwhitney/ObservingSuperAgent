@@ -46,6 +46,7 @@ export class InMemoryWorkTrackingConnector
       description: item.description ?? '',
       tags: item.tags ?? [this.settings.readyTag],
       status: item.status ?? 'Ready',
+      comments: item.comments ?? [],
       ...item,
     };
     this.items.set(full.id, full);
@@ -71,6 +72,9 @@ export class InMemoryWorkTrackingConnector
     this.annotations.push({ ref, annotation });
     const item = this.items.get(ref.id);
     if (!item) return;
+    if (annotation.comment) {
+      item.comments.push({ author: this.name, body: annotation.comment, createdAt: '' });
+    }
     const removed = new Set(annotation.removeTags ?? []);
     item.tags = item.tags.filter((tag) => !removed.has(tag));
     for (const tag of annotation.addTags ?? []) {
@@ -91,5 +95,10 @@ export class InMemoryWorkTrackingConnector
   /** All comments recorded across annotations, for assertions. */
   comments(): string[] {
     return this.annotations.flatMap((a) => (a.annotation.comment ? [a.annotation.comment] : []));
+  }
+
+  /** Test helper: simulate a human replying on the ticket. */
+  addComment(id: string, author: string, body: string): void {
+    this.items.get(id)?.comments.push({ author, body, createdAt: '' });
   }
 }
