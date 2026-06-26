@@ -67,6 +67,23 @@ describe('Reconciler', () => {
     expect(system.tracker.get('1')!.tags).toContain('agent-complete');
   });
 
+  it('survives a per-item failure and keeps reconciling the rest', async () => {
+    const { system, record } = await dispatched();
+    system.agent.complete(record.runs[0]!.agentRunId);
+
+    // Make this connector's writes blow up.
+    system.tracker.AnnotateItem = async () => {
+      throw new Error('JIRA 400: labels not on screen');
+    };
+
+    const summary = await system.reconciler.reconcile({ apply: true });
+
+    expect(summary.scanned).toBe(1);
+    expect(summary.repaired).toBe(0);
+    expect(summary.entries[0]!.actions.some((a) => a.startsWith('error:'))).toBe(true);
+    expect(system.comms.typesSeen()).toContain('failed');
+  });
+
   it('flags a record whose agent run failed', async () => {
     const { system, record } = await dispatched();
     system.agent.setStatus({ agentRunId: record.runs[0]!.agentRunId, state: 'failed' });

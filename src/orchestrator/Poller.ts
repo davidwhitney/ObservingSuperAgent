@@ -42,15 +42,24 @@ export class Poller {
       if (!connector) continue;
       summary.polled += 1;
 
-      const linkedBefore = record.runs.filter((r) => r.linkAnnounced).length;
-      const result = await resolveRecord(connector, this.deps, record, true);
-      summary.linked += record.runs.filter((r) => r.linkAnnounced).length - linkedBefore;
+      try {
+        const linkedBefore = record.runs.filter((r) => r.linkAnnounced).length;
+        const result = await resolveRecord(connector, this.deps, record, true);
+        summary.linked += record.runs.filter((r) => r.linkAnnounced).length - linkedBefore;
 
-      if (result.statusChanged) {
-        if (result.after === 'completed') summary.completed += 1;
-        else if (result.after === 'done') summary.done += 1;
-        else if (result.after === 'rejected') summary.rejected += 1;
-        else if (result.after === 'failed') summary.failed += 1;
+        if (result.statusChanged) {
+          if (result.after === 'completed') summary.completed += 1;
+          else if (result.after === 'done') summary.done += 1;
+          else if (result.after === 'rejected') summary.rejected += 1;
+          else if (result.after === 'failed') summary.failed += 1;
+        }
+      } catch (err) {
+        // A single failing item must not abort the whole cycle.
+        await this.deps.comms.notify({
+          type: 'failed',
+          workItemKey: record.workItem.key,
+          message: `Poll failed for ${record.id}: ${(err as Error).message.slice(0, 160)}`,
+        });
       }
     }
 

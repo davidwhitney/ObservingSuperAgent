@@ -58,7 +58,25 @@ export class Reconciler {
     const records = await this.deps.memory.all();
     const entries: ReconcileEntry[] = [];
     for (const record of records) {
-      entries.push(await this.reconcileRecord(record, apply));
+      try {
+        entries.push(await this.reconcileRecord(record, apply));
+      } catch (err) {
+        // One item failing (e.g. a JIRA write rejected) must not abort the batch.
+        entries.push({
+          id: record.id,
+          workItemKey: record.workItem.key,
+          recordedStatus: record.status,
+          derivedStatus: record.status,
+          downstreamDrift: false,
+          actions: [`error: ${(err as Error).message.slice(0, 160)}`],
+          applied: false,
+        });
+        await this.deps.comms.notify({
+          type: 'failed',
+          workItemKey: record.workItem.key,
+          message: `Reconcile failed for ${record.id}: ${(err as Error).message.slice(0, 160)}`,
+        });
+      }
     }
     return {
       apply,
