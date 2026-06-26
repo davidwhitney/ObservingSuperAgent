@@ -38,8 +38,9 @@ export interface Annotation {
   comment?: string;
   addTags?: string[];
   removeTags?: string[];
-  /** Target column / status to transition the item to. */
-  transitionTo?: string;
+  /** Candidate target columns/statuses, in priority order. The connector moves
+   * the item to the first that exists on its board. */
+  transitionTo?: string[];
 }
 
 /** Output of the planning step: which repos to change and the prompt to drive the agent. */

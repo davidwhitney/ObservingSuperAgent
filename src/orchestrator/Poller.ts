@@ -2,7 +2,7 @@ import type { WorkTrackingConnector } from '../worktracking/WorkTrackingConnecto
 import type { AgentConnector } from '../agents/AgentConnector';
 import type { CommunicationAdapter } from '../comms/CommunicationAdapter';
 import { AgentMemory } from '../memory/AgentMemory';
-import { resolveRecord } from './lifecycle';
+import { connectorsByName, resolveRecord } from './lifecycle';
 
 export interface PollerDeps {
   connectors: WorkTrackingConnector[];
@@ -27,10 +27,10 @@ export interface PollSummary {
  * shared {@link resolveRecord}.
  */
 export class Poller {
-  private readonly connectorsByName: Map<string, WorkTrackingConnector>;
+  private readonly connectors: Map<string, WorkTrackingConnector>;
 
   constructor(private readonly deps: PollerDeps) {
-    this.connectorsByName = new Map(deps.connectors.map((c) => [c.name, c]));
+    this.connectors = connectorsByName(deps.connectors);
   }
 
   async runPollCycle(): Promise<PollSummary> {
@@ -38,7 +38,7 @@ export class Poller {
     const records = await this.deps.memory.recordsToPoll();
 
     for (const record of records) {
-      const connector = this.connectorsByName.get(record.connector);
+      const connector = this.connectors.get(record.connector);
       if (!connector) continue;
       summary.polled += 1;
 

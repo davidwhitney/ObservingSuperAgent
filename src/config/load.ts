@@ -73,5 +73,19 @@ export function loadConfig(options: LoadOptions = {}): Config {
   }
 
   const merged = applyEnvOverlay(fileConfig, env);
-  return configSchema.parse(merged);
+  const config = configSchema.parse(merged);
+  applyGitHubTokenFallback(config, env);
+  return config;
+}
+
+/**
+ * Fall back to the conventional `GITHUB_TOKEN` env var for the agent and MCP
+ * GitHub tokens when they aren't set explicitly (in the file or via an `OSA_`
+ * override, both of which take precedence).
+ */
+function applyGitHubTokenFallback(config: Config, env: NodeJS.ProcessEnv): void {
+  const fallback = env.GITHUB_TOKEN;
+  if (!fallback) return;
+  config.agent.github.token ??= fallback;
+  config.mcp.github.token ??= fallback;
 }

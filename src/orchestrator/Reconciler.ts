@@ -3,7 +3,7 @@ import type { AgentConnector } from '../agents/AgentConnector';
 import type { CommunicationAdapter } from '../comms/CommunicationAdapter';
 import { AgentMemory } from '../memory/AgentMemory';
 import { isReadable } from '../worktracking/ReadableWorkTracking';
-import { expectedAnnotationFor, resolveRecord } from './lifecycle';
+import { connectorsByName, expectedAnnotationFor, resolveRecord } from './lifecycle';
 import type { Annotation, DispatchRecord, DispatchRecordStatus, WorkItem } from '../domain/types';
 
 export interface ReconcilerDeps {
@@ -47,10 +47,10 @@ export interface ReconcileSummary {
  * Useful during development and to absorb out-of-band edits to the data sources.
  */
 export class Reconciler {
-  private readonly connectorsByName: Map<string, WorkTrackingConnector>;
+  private readonly connectors: Map<string, WorkTrackingConnector>;
 
   constructor(private readonly deps: ReconcilerDeps) {
-    this.connectorsByName = new Map(deps.connectors.map((c) => [c.name, c]));
+    this.connectors = connectorsByName(deps.connectors);
   }
 
   async reconcile(options: ReconcileOptions = {}): Promise<ReconcileSummary> {
@@ -82,7 +82,7 @@ export class Reconciler {
       applied: false,
     };
 
-    const connector = this.connectorsByName.get(record.connector);
+    const connector = this.connectors.get(record.connector);
     if (!connector) {
       actions.push(`no connector "${record.connector}" configured`);
       return entry;
@@ -128,6 +128,6 @@ export class Reconciler {
 function downstreamMatches(item: WorkItem, expected: Annotation): boolean {
   for (const tag of expected.addTags ?? []) if (!item.tags.includes(tag)) return false;
   for (const tag of expected.removeTags ?? []) if (item.tags.includes(tag)) return false;
-  if (expected.transitionTo && item.status !== expected.transitionTo) return false;
+  if (expected.transitionTo?.length && !expected.transitionTo.includes(item.status)) return false;
   return true;
 }

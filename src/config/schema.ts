@@ -1,16 +1,35 @@
 import { z } from 'zod';
 
-/** Per-project overrides for the JIRA selection / lifecycle heuristics. */
-const jiraProjectConfig = z.object({
-  readyTag: z.string().optional(),
-  actingTag: z.string().optional(),
-  completeTag: z.string().optional(),
+/** A column setting: a single name or an ordered list of candidates. Normalised to a list. */
+const columnList = z
+  .union([z.string(), z.array(z.string())])
+  .transform((value) => (Array.isArray(value) ? value : [value]));
+
+/**
+ * Board lifecycle config: the tags/columns that drive selection and the stage
+ * transitions. Used both as `defaultConfig` (board-level, with defaults filled
+ * in) and — via `.partial()` — as each `projectConfig` override. Column fields
+ * accept a single name or a list; the card moves to the first candidate that
+ * exists on its board.
+ */
+const boardConfig = z.object({
+  readyTag: z.string().default('agent-ready'),
+  /** Tag applied (and ready tag removed) when the agent picks the item up. */
+  actingTag: z.string().default('agent-acting'),
+  /** Tag applied when the agent's PR is up for review. */
+  completeTag: z.string().default('agent-complete'),
+  /** Optional tag applied when the PR is merged. */
   doneTag: z.string().optional(),
-  rejectedTag: z.string().optional(),
-  readyColumns: z.array(z.string()).optional(),
-  actingColumn: z.string().optional(),
-  completeColumn: z.string().optional(),
-  doneColumn: z.string().optional(),
+  /** Tag applied when the PR is closed without merging. */
+  rejectedTag: z.string().default('reviewer-rejected'),
+  /** Column / status names that also mark an item as ready. */
+  readyColumns: columnList.default([]),
+  /** Column(s) to move the item to when the agent picks it up. */
+  actingColumn: columnList.default([]),
+  /** Column(s) to move the item to when the work is up for review. */
+  completeColumn: columnList.default([]),
+  /** Column(s) to move the item to when the PR is merged or closed. */
+  doneColumn: columnList.default(['Done']),
 });
 
 const jiraConfig = z.object({
@@ -22,25 +41,10 @@ const jiraConfig = z.object({
   mode: z.enum(['opt-in', 'opt-out']).default('opt-in'),
   projectIds: z.array(z.string()).default([]),
   excludedProjectIds: z.array(z.string()).default([]),
-  readyTag: z.string().default('agent-ready'),
-  /** Tag applied (and ready tag removed) when the agent picks the item up. */
-  actingTag: z.string().default('agent-acting'),
-  /** Tag applied when the agent's PR is up for review. */
-  completeTag: z.string().default('agent-complete'),
-  /** Optional tag applied when the PR is merged. */
-  doneTag: z.string().optional(),
-  /** Tag applied when the PR is closed without merging. */
-  rejectedTag: z.string().default('reviewer-rejected'),
-  /** Column / status names that also mark an item as ready. */
-  readyColumns: z.array(z.string()).default([]),
-  /** Optional column to move the item to when the agent picks it up. */
-  actingColumn: z.string().optional(),
-  /** Optional column to move the item to when the work is up for review. */
-  completeColumn: z.string().optional(),
-  /** Column to move the item to when the PR is merged or closed. */
-  doneColumn: z.string().default('Done'),
-  /** Per-project overrides keyed by project id. */
-  projectConfig: z.record(z.string(), jiraProjectConfig).default({}),
+  /** Board-level lifecycle config (same shape as a projectConfig entry). */
+  defaultConfig: boardConfig.default({}),
+  /** Per-project overrides keyed by project id; each overrides defaultConfig. */
+  projectConfig: z.record(z.string(), boardConfig.partial()).default({}),
 });
 
 const memoryConfig = z.object({
@@ -126,7 +130,7 @@ export const configSchema = z.object({
 
 export type Config = z.infer<typeof configSchema>;
 export type JiraConfig = z.infer<typeof jiraConfig>;
-export type JiraProjectConfig = z.infer<typeof jiraProjectConfig>;
+export type BoardConfig = z.infer<typeof boardConfig>;
 export type MemoryConfig = z.infer<typeof memoryConfig>;
 export type LlmConfig = z.infer<typeof llmConfig>;
 export type McpConfig = z.infer<typeof mcpConfig>;

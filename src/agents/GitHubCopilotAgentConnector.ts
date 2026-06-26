@@ -1,6 +1,7 @@
 import type { AgentConnector, DispatchInput, DispatchResult } from './AgentConnector';
 import type { AgentRunStatus } from '../domain/types';
 import type { McpToolProvider } from '../mcp/McpToolProvider';
+import { JsonHttpClient } from '../http/JsonHttpClient';
 
 export interface GitHubCopilotOptions {
   token?: string;
@@ -33,19 +34,23 @@ interface RepoRef {
  */
 export class GitHubCopilotAgentConnector implements AgentConnector {
   readonly name = 'github-copilot';
-  private readonly baseUrl: string;
-  private readonly fetchFn: typeof fetch;
+  private readonly http: JsonHttpClient;
   private readonly mcpServerName: string;
 
   constructor(private readonly options: GitHubCopilotOptions) {
-    this.baseUrl = options.baseUrl ?? 'https://api.github.com';
-    this.fetchFn = options.fetchFn ?? fetch;
+    this.http = new JsonHttpClient({
+      baseUrl: options.baseUrl ?? 'https://api.github.com',
+      label: 'GitHub API',
+      defaultHeaders: { Accept: 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28' },
+      authHeader: options.token ? `Bearer ${options.token}` : undefined,
+      fetchFn: options.fetchFn,
+    });
     this.mcpServerName = options.mcpServerName ?? 'github';
   }
 
   async dispatch(input: DispatchInput): Promise<DispatchResult> {
     const { owner, repo } = parseRepository(input.repository);
-    const issue = (await this.request('POST', `/repos/${owner}/${repo}/issues`, {
+    const issue = (await this.http.request('POST', `/repos/${owner}/${repo}/issues`, {
       title: titleFor(input),
       body: input.prompt,
     })) as { number: number; html_url: string };
@@ -69,7 +74,7 @@ export class GitHubCopilotAgentConnector implements AgentConnector {
       });
       return;
     }
-    await this.request('POST', `/repos/${owner}/${repo}/issues/${issueNumber}/assignees`, {
+    await this.http.request('POST', `/repos/${owner}/${repo}/issues/${issueNumber}/assignees`, {
       assignees: [this.options.assignee],
     });
   }
@@ -78,7 +83,7 @@ export class GitHubCopilotAgentConnector implements AgentConnector {
     const ref = parseAgentRunId(agentRunId);
     const { owner, repo, issueNumber } = ref;
 
-    const timeline = (await this.request(
+    const timeline = (await this.http.request(
       'GET',
       `/repos/${owner}/${repo}/issues/${issueNumber}/timeline`,
     )) as TimelineEvent[];
@@ -88,7 +93,7 @@ export class GitHubCopilotAgentConnector implements AgentConnector {
       return { agentRunId, state: 'in_progress', detail: 'no linked PR yet' };
     }
 
-    const pr = (await this.request('GET', `/repos/${owner}/${repo}/pulls/${prNumber}`)) as {
+    const pr = (await this.http.request('GET', `/repos/${owner}/${repo}/pulls/${prNumber}`)) as {
       state: string;
       draft?: boolean;
       merged_at: string | null;
@@ -121,29 +126,6 @@ export class GitHubCopilotAgentConnector implements AgentConnector {
     }
 
     return { agentRunId, state, prUrl: pr.html_url, detail };
-  }
-
-  private async request(method: string, path: string, body?: unknown): Promise<unknown> {
-    const headers: Record<string, string> = {
-      Accept: 'application/vnd.github+json',
-      'X-GitHub-Api-Version': '2022-11-28',
-    };
-    if (this.options.token) headers.Authorization = `Bearer ${this.options.token}`;
-    if (body !== undefined) headers['Content-Type'] = 'application/json';
-
-    const response = await this.fetchFn(`${this.baseUrl}${path}`, {
-      method,
-      headers,
-      body: body === undefined ? undefined : JSON.stringify(body),
-    });
-
-    if (!response.ok) {
-      const text = await response.text().catch(() => '');
-      throw new Error(`GitHub API ${method} ${path} failed: ${response.status} ${text}`);
-    }
-    if (response.status === 204) return undefined;
-    const text = await response.text();
-    return text ? JSON.parse(text) : undefined;
   }
 }
 

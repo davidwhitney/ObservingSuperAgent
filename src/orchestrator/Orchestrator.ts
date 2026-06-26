@@ -3,8 +3,8 @@ import type { AgentConnector } from '../agents/AgentConnector';
 import type { CommunicationAdapter } from '../comms/CommunicationAdapter';
 import type { Planner } from '../llm/Planner';
 import { AgentMemory, recordIdFor } from '../memory/AgentMemory';
-import { DEFAULT_ACTING, hasLifecyclePolicy } from '../worktracking/LifecyclePolicy';
-import type { Annotation, DispatchRecord, DispatchRun, WorkItem, WorkItemRef } from '../domain/types';
+import { expectedAnnotationFor } from './lifecycle';
+import type { DispatchRecord, DispatchRun, WorkItem, WorkItemRef } from '../domain/types';
 
 export interface OrchestratorDeps {
   connectors: WorkTrackingConnector[];
@@ -93,9 +93,7 @@ export class Orchestrator {
 
     // Mark the item as picked up: drop the ready tag, add the acting tag /
     // move columns (per connector policy), and leave a linking comment.
-    const acting: Annotation = hasLifecyclePolicy(connector)
-      ? connector.dispatchAnnotationFor(ref)
-      : { ...DEFAULT_ACTING };
+    const acting = expectedAnnotationFor(connector, ref, 'dispatched') ?? {};
     await connector.AnnotateItem(ref, { ...acting, comment: dispatchComment(record) });
     await this.deps.comms.notify({
       type: 'dispatched',

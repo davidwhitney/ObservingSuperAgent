@@ -55,7 +55,9 @@ describe('poller poll cycle', () => {
     expect((await system.memory.get(record.id))?.status).toBe('done');
     const item = system.tracker.get('1')!;
     expect(item.status).toBe('Done');
+    // Terminal: in-flight tags are stripped.
     expect(item.tags).not.toContain('agent-acting');
+    expect(item.tags).not.toContain('agent-complete');
   });
 
   it('rejects (Done column + reviewer-rejected tag) when the PR is closed unmerged', async () => {
@@ -69,6 +71,7 @@ describe('poller poll cycle', () => {
     const item = system.tracker.get('1')!;
     expect(item.status).toBe('Done');
     expect(item.tags).toContain('reviewer-rejected');
+    expect(item.tags).not.toContain('agent-complete');
   });
 
   it('keeps polling an in-review record until it resolves', async () => {

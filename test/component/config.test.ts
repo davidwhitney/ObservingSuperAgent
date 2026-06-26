@@ -57,6 +57,27 @@ describe('loadConfig', () => {
     expect(config.jira?.projectIds).toEqual(['ENG', 'OPS']);
   });
 
+  it('falls back to GITHUB_TOKEN for both github tokens when unset', () => {
+    const config = loadConfig({
+      configPath: writeConfig({ agent: { provider: 'github-copilot' }, mcp: { github: { enabled: true } } }),
+      env: { GITHUB_TOKEN: 'ghp_env' } as NodeJS.ProcessEnv,
+    });
+    expect(config.agent.github.token).toBe('ghp_env');
+    expect(config.mcp.github.token).toBe('ghp_env');
+  });
+
+  it('does not override explicitly-configured github tokens with GITHUB_TOKEN', () => {
+    const config = loadConfig({
+      configPath: writeConfig({
+        agent: { provider: 'github-copilot', github: { token: 'agent-explicit' } },
+        mcp: { github: { enabled: true, token: 'mcp-explicit' } },
+      }),
+      env: { GITHUB_TOKEN: 'ghp_env' } as NodeJS.ProcessEnv,
+    });
+    expect(config.agent.github.token).toBe('agent-explicit');
+    expect(config.mcp.github.token).toBe('mcp-explicit');
+  });
+
   it('throws on invalid config', () => {
     const path = writeConfig({ jira: { baseUrl: 'not-a-url' } });
     expect(() => loadConfig({ configPath: path, env: {} })).toThrow();

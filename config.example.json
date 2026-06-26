@@ -29,16 +29,19 @@
     "mode": "opt-in",
     "projectIds": ["ENG"],
     "excludedProjectIds": [],
-    "readyTag": "agent-ready",
-    "actingTag": "agent-acting",
-    "completeTag": "agent-complete",
-    "rejectedTag": "reviewer-rejected",
-    "readyColumns": ["Ready for Agent"],
-    "actingColumn": "In Progress",
-    "completeColumn": "In Review",
-    "doneColumn": "Done",
+    "_comment_board": "defaultConfig is the board-level lifecycle config; each projectConfig entry is the same shape and overrides it. Columns accept a string or a list (first existing wins).",
+    "defaultConfig": {
+      "readyTag": "agent-ready",
+      "actingTag": "agent-acting",
+      "completeTag": "agent-complete",
+      "rejectedTag": "reviewer-rejected",
+      "readyColumns": ["Ready for Agent"],
+      "actingColumn": ["In Progress", "Doing"],
+      "completeColumn": ["In Review", "Review"],
+      "doneColumn": ["Done", "Closed"]
+    },
     "projectConfig": {
-      "OPS": { "readyColumns": ["Automate"], "actingColumn": "Working", "completeColumn": "Review", "doneColumn": "Shipped" }
+      "OPS": { "readyColumns": ["Automate"], "actingColumn": ["Working"], "completeColumn": ["Review"], "doneColumn": ["Shipped"] }
     }
   }
 }

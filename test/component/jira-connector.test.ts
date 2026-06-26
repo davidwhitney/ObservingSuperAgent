@@ -1,21 +1,26 @@
 import { describe, it, expect } from 'vitest';
 import { JiraClient, type JiraIssue } from '../../src/worktracking/jira/JiraClient';
 import { JiraConnector } from '../../src/worktracking/jira/JiraConnector';
-import type { JiraConfig } from '../../src/config/schema';
+import type { BoardConfig, JiraConfig } from '../../src/config/schema';
 import { fakeFetch, type RecordedCall, type RouteResult } from '../helpers/fakeFetch';
 
-function jiraConfig(overrides: Partial<JiraConfig> = {}): JiraConfig {
+function jiraConfig(overrides: Partial<JiraConfig> = {}, board: Partial<BoardConfig> = {}): JiraConfig {
   return {
     baseUrl: 'https://acme.atlassian.net',
     mode: 'opt-in',
     projectIds: ['ENG'],
     excludedProjectIds: [],
-    readyTag: 'agent-ready',
-    actingTag: 'agent-acting',
-    completeTag: 'agent-complete',
-    rejectedTag: 'reviewer-rejected',
-    readyColumns: ['Ready'],
-    doneColumn: 'Done',
+    defaultConfig: {
+      readyTag: 'agent-ready',
+      actingTag: 'agent-acting',
+      completeTag: 'agent-complete',
+      rejectedTag: 'reviewer-rejected',
+      readyColumns: ['Ready'],
+      actingColumn: [],
+      completeColumn: [],
+      doneColumn: ['Done'],
+      ...board,
+    },
     projectConfig: {},
     ...overrides,
   };
@@ -87,36 +92,39 @@ describe('JiraConnector selection', () => {
     expect(jql.jql).toContain('project not in ("SECRET")');
   });
 
-  it('applies per-project column overrides', async () => {
-    const config = jiraConfig({
-      projectIds: ['OPS'],
-      readyColumns: [],
-      projectConfig: { OPS: { readyColumns: ['Automate'], actingColumn: 'In Progress', completeColumn: 'Done' } },
-    });
+  it('applies per-project overrides on top of defaultConfig', async () => {
+    const config = jiraConfig(
+      {
+        projectIds: ['OPS'],
+        projectConfig: { OPS: { readyColumns: ['Automate'], actingColumn: ['In Progress'], completeColumn: ['Done'] } },
+      },
+      { readyColumns: [] },
+    );
     const { connector } = connectorWith(config, [issue('5', 'OPS-5', 'OPS', [], 'Automate')]);
 
     const items = await connector.RetrieveWorkReadyForDispatch();
 
     expect(items.map((i) => i.key)).toEqual(['OPS-5']);
-    expect(connector.dispatchAnnotationFor(items[0]!)).toEqual({
+    expect(connector.annotationFor(items[0]!, 'dispatched')).toEqual({
       removeTags: ['agent-ready'],
       addTags: ['agent-acting'],
-      transitionTo: 'In Progress',
+      transitionTo: ['In Progress'],
     });
-    expect(connector.completionAnnotationFor(items[0]!)).toEqual({
+    // completeTag/rejectedTag fall through to defaultConfig; column comes from the override.
+    expect(connector.annotationFor(items[0]!, 'completed')).toEqual({
       removeTags: ['agent-ready', 'agent-acting'],
       addTags: ['agent-complete'],
-      transitionTo: 'Done',
+      transitionTo: ['Done'],
     });
   });
 
-  it('uses configurable acting tag/column on dispatch', async () => {
-    const config = jiraConfig({ actingTag: 'wip', actingColumn: 'In Progress' });
+  it('accepts a single column string or a list (normalised to a list)', async () => {
+    const config = jiraConfig({}, { actingTag: 'wip', actingColumn: ['In Progress', 'Doing'] });
     const { connector } = connectorWith(config, []);
-    expect(connector.dispatchAnnotationFor({ connector: 'jira', projectId: 'KAN', id: '1' })).toEqual({
+    expect(connector.annotationFor({ connector: 'jira', projectId: 'KAN', id: '1' }, 'dispatched')).toEqual({
       removeTags: ['agent-ready'],
       addTags: ['wip'],
-      transitionTo: 'In Progress',
+      transitionTo: ['In Progress', 'Doing'],
     });
   });
 });
@@ -133,7 +141,7 @@ describe('JiraConnector.AnnotateItem', () => {
 
     await connector.AnnotateItem(
       { connector: 'jira', projectId: 'ENG', id: '1001', key: 'ENG-1' },
-      { comment: 'hello', addTags: ['agent-complete'], removeTags: ['agent-ready'], transitionTo: 'Done' },
+      { comment: 'hello', addTags: ['agent-complete'], removeTags: ['agent-ready'], transitionTo: ['Done'] },
     );
 
     const comment = calls.find((c) => c.url.endsWith('/issue/1001/comment'));
@@ -146,5 +154,38 @@ describe('JiraConnector.AnnotateItem', () => {
 
     const transition = calls.find((c) => c.method === 'POST' && c.url.endsWith('/issue/1001/transitions'));
     expect(transition?.body).toEqual({ transition: { id: '31' } });
+  });
+
+  it('moves to the first candidate column that exists on the board', async () => {
+    const config = jiraConfig();
+    const { connector, calls } = connectorWith(config, [], (call) => {
+      if (call.url.endsWith('/issue/1001/transitions') && call.method === 'GET') {
+        // Board has "In Review" but not "QA".
+        return { body: { transitions: [{ id: '42', to: { name: 'In Review' } }] } };
+      }
+      return undefined;
+    });
+
+    await connector.AnnotateItem(
+      { connector: 'jira', projectId: 'ENG', id: '1001' },
+      { transitionTo: ['QA', 'In Review', 'Done'] },
+    );
+
+    const transition = calls.find((c) => c.method === 'POST' && c.url.endsWith('/issue/1001/transitions'));
+    expect(transition?.body).toEqual({ transition: { id: '42' } });
+  });
+
+  it('skips the transition when no candidate column exists on the board', async () => {
+    const config = jiraConfig();
+    const { connector, calls } = connectorWith(config, [], (call) => {
+      if (call.url.endsWith('/issue/1001/transitions') && call.method === 'GET') {
+        return { body: { transitions: [{ id: '7', to: { name: 'Done' } }] } };
+      }
+      return undefined;
+    });
+
+    await connector.AnnotateItem({ connector: 'jira', projectId: 'ENG', id: '1001' }, { transitionTo: ['QA', 'Staging'] });
+
+    expect(calls.some((c) => c.method === 'POST' && c.url.endsWith('/transitions'))).toBe(false);
   });
 });

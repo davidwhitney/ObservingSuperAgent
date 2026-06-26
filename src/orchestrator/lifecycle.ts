@@ -2,13 +2,12 @@ import type { WorkTrackingConnector } from '../worktracking/WorkTrackingConnecto
 import type { AgentConnector } from '../agents/AgentConnector';
 import type { CommunicationAdapter } from '../comms/CommunicationAdapter';
 import type { AgentMemory } from '../memory/AgentMemory';
+import { hasLifecyclePolicy } from '../worktracking/LifecyclePolicy';
 import {
-  DEFAULT_ACTING,
-  DEFAULT_COMPLETION,
-  DEFAULT_DONE,
-  DEFAULT_REJECTED,
-  hasLifecyclePolicy,
-} from '../worktracking/LifecyclePolicy';
+  DEFAULT_LIFECYCLE_SETTINGS,
+  annotationForStage,
+  type LifecycleStage,
+} from '../worktracking/lifecycleAnnotations';
 import type {
   AgentRunState,
   Annotation,
@@ -17,6 +16,14 @@ import type {
   DispatchRecordStatus,
   WorkItemRef,
 } from '../domain/types';
+
+/** Lifecycle stages are a subset of the record statuses that carry an annotation. */
+const STAGE_FOR_STATUS: Partial<Record<DispatchRecordStatus, LifecycleStage>> = {
+  dispatched: 'dispatched',
+  completed: 'completed',
+  done: 'done',
+  rejected: 'rejected',
+};
 
 export interface LifecycleDeps {
   agent: AgentConnector;
@@ -54,19 +61,11 @@ export function expectedAnnotationFor(
   ref: WorkItemRef,
   status: DispatchRecordStatus,
 ): Annotation | undefined {
-  const policy = hasLifecyclePolicy(connector);
-  switch (status) {
-    case 'dispatched':
-      return policy ? connector.dispatchAnnotationFor(ref) : { ...DEFAULT_ACTING };
-    case 'completed':
-      return policy ? connector.completionAnnotationFor(ref) : { ...DEFAULT_COMPLETION };
-    case 'done':
-      return policy ? connector.doneAnnotationFor(ref) : { ...DEFAULT_DONE };
-    case 'rejected':
-      return policy ? connector.rejectedAnnotationFor(ref) : { ...DEFAULT_REJECTED };
-    default:
-      return undefined;
-  }
+  const stage = STAGE_FOR_STATUS[status];
+  if (!stage) return undefined;
+  return hasLifecyclePolicy(connector)
+    ? connector.annotationFor(ref, stage)
+    : annotationForStage(DEFAULT_LIFECYCLE_SETTINGS, stage);
 }
 
 interface Transition {
@@ -150,4 +149,11 @@ export async function resolveRecord(
 
 export function linkComment(repository: string, prUrl: string): string {
   return `🔗 Agent opened a pull request for ${repository}: ${prUrl}`;
+}
+
+/** Index connectors by their name for lookup by record. */
+export function connectorsByName(
+  connectors: WorkTrackingConnector[],
+): Map<string, WorkTrackingConnector> {
+  return new Map(connectors.map((c) => [c.name, c]));
 }

@@ -85,17 +85,25 @@ OSA_API__PORT=9090 OSA_JIRA__APITOKEN=*** npm start
 Secrets are best supplied via the environment rather than the file. To enable JIRA, add a
 top-level `jira` block (the shape is shown under `_jira_example` in `config.example.json`).
 
+As a convenience, a plain **`GITHUB_TOKEN`** env var is used as the fallback for both
+`agent.github.token` and `mcp.github.token` when they aren't set explicitly (an explicit value in
+the file or an `OSA_` override still takes precedence).
+
 ### Selection heuristics
 - `mode: "opt-in"` only queries the listed `projectIds`; `"opt-out"` queries everything except
   `excludedProjectIds`.
 - An item is ready if it carries `readyTag` (default `agent-ready`) **or** sits in a `readyColumns`
   status.
-- **Lifecycle tags/columns** (all configurable, globally or per-project):
-  - on **dispatch**: drop `readyTag`, add `actingTag` (default `agent-acting`); move to `actingColumn` if set.
-  - on **review** (PR ready for review / review requested): drop `readyTag`/`actingTag`, add `completeTag` (default `agent-complete`); move to `completeColumn` if set.
-  - on **merge**: move to `doneColumn` (default `Done`); add `doneTag` if set.
-  - on **close without merge**: move to `doneColumn`; add `rejectedTag` (default `reviewer-rejected`).
-- `projectConfig[<projectId>]` overrides any of these tags/columns for a specific project.
+- **Board lifecycle config** lives in `jira.defaultConfig`; each `jira.projectConfig[<projectId>]`
+  entry is the **same shape** and overrides `defaultConfig` for that project (field by field).
+- Column fields (`readyColumns`, `actingColumn`, `completeColumn`, `doneColumn`) accept a single
+  name **or a list**; the card moves to the **first candidate that exists on its board** (others are
+  skipped), so one config can span boards with different column names.
+- **Lifecycle transitions** (tags + first-matching column):
+  - on **dispatch**: drop `readyTag`, add `actingTag` (default `agent-acting`); move to `actingColumn`.
+  - on **review** (PR ready for review / review requested): drop `readyTag`/`actingTag`, add `completeTag` (default `agent-complete`); move to `completeColumn`.
+  - on **merge**: drop the in-flight tags (`readyTag`/`actingTag`/`completeTag`); move to `doneColumn` (default `Done`); add `doneTag` if set.
+  - on **close without merge**: drop the in-flight tags; move to `doneColumn`; add `rejectedTag` (default `reviewer-rejected`).
 
 ## Extension points (adapter pattern)
 

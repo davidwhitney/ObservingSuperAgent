@@ -4,14 +4,8 @@ import type { ReadableWorkTracking } from '../ReadableWorkTracking';
 import type { Annotation, WorkItem, WorkItemRef } from '../../domain/types';
 import type { JiraConfig } from '../../config/schema';
 import { JiraClient, adfToText, type JiraIssue } from './JiraClient';
-import {
-  actingAnnotation,
-  completionAnnotation,
-  doneAnnotation,
-  effectiveConfig,
-  isReady,
-  rejectedAnnotation,
-} from '../selection';
+import { effectiveConfig, isReady } from '../selection';
+import { annotationForStage, type LifecycleStage } from '../lifecycleAnnotations';
 
 /**
  * JIRA work-tracking connector. Selects work via tag ("agent-ready" by default)
@@ -43,7 +37,7 @@ export class JiraConnector implements WorkTrackingConnector, LifecyclePolicy, Re
     if (add.length || remove.length) {
       await this.client.updateLabels(ref.id, add, remove);
     }
-    if (annotation.transitionTo) {
+    if (annotation.transitionTo?.length) {
       await this.client.transition(ref.id, annotation.transitionTo);
     }
   }
@@ -53,20 +47,8 @@ export class JiraConnector implements WorkTrackingConnector, LifecyclePolicy, Re
     return issue ? this.toWorkItem(issue) : null;
   }
 
-  dispatchAnnotationFor(ref: WorkItemRef): Annotation {
-    return actingAnnotation(this.config, ref);
-  }
-
-  completionAnnotationFor(ref: WorkItemRef): Annotation {
-    return completionAnnotation(this.config, ref);
-  }
-
-  doneAnnotationFor(ref: WorkItemRef): Annotation {
-    return doneAnnotation(this.config, ref);
-  }
-
-  rejectedAnnotationFor(ref: WorkItemRef): Annotation {
-    return rejectedAnnotation(this.config, ref);
+  annotationFor(ref: WorkItemRef, stage: LifecycleStage): Annotation {
+    return annotationForStage(effectiveConfig(this.config, ref.projectId), stage);
   }
 
   /** Build the JQL net. Precise per-project clauses for opt-in; global net for opt-out. */
@@ -80,7 +62,7 @@ export class JiraConnector implements WorkTrackingConnector, LifecyclePolicy, Re
       return clauses.join(' OR ');
     }
 
-    let jql = `(${readyClause(config.readyTag, config.readyColumns)})`;
+    let jql = `(${readyClause(config.defaultConfig.readyTag, config.defaultConfig.readyColumns)})`;
     if (config.excludedProjectIds.length) {
       jql += ` AND project not in (${config.excludedProjectIds.map(quote).join(', ')})`;
     }

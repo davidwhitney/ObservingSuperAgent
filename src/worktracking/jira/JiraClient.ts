@@ -1,3 +1,5 @@
+import { JsonHttpClient } from '../../http/JsonHttpClient';
+
 export interface JiraClientOptions {
   baseUrl: string;
   email?: string;
@@ -26,17 +28,20 @@ interface JiraTransition {
 
 /** Thin REST client for JIRA Cloud (API v3). HTTP transport is injectable. */
 export class JiraClient {
-  private readonly baseUrl: string;
-  private readonly fetchFn: typeof fetch;
-  private readonly authHeader?: string;
+  private readonly http: JsonHttpClient;
 
   constructor(options: JiraClientOptions) {
-    this.baseUrl = options.baseUrl.replace(/\/$/, '');
-    this.fetchFn = options.fetchFn ?? fetch;
-    if (options.email && options.apiToken) {
-      const token = Buffer.from(`${options.email}:${options.apiToken}`).toString('base64');
-      this.authHeader = `Basic ${token}`;
-    }
+    const authHeader =
+      options.email && options.apiToken
+        ? `Basic ${Buffer.from(`${options.email}:${options.apiToken}`).toString('base64')}`
+        : undefined;
+    this.http = new JsonHttpClient({
+      baseUrl: options.baseUrl,
+      label: 'JIRA',
+      defaultHeaders: { Accept: 'application/json' },
+      authHeader,
+      fetchFn: options.fetchFn,
+    });
   }
 
   /** Run a JQL search and return the matching issues. */
@@ -46,7 +51,7 @@ export class JiraClient {
       maxResults,
       fields: ['summary', 'description', 'labels', 'status', 'project'],
     };
-    const result = (await this.request('POST', '/rest/api/3/search/jql', body)) as {
+    const result = (await this.http.request('POST', '/rest/api/3/search/jql', body)) as {
       issues?: JiraIssue[];
     };
     return result.issues ?? [];
@@ -56,15 +61,35 @@ export class JiraClient {
   async getIssue(issueId: string): Promise<JiraIssue | null> {
     const path = `/rest/api/3/issue/${issueId}?fields=summary,description,labels,status,project`;
     try {
-      return (await this.request('GET', path)) as JiraIssue;
+      return (await this.http.request('GET', path)) as JiraIssue;
     } catch (err) {
       if (/failed: 404/.test((err as Error).message)) return null;
       throw err;
     }
   }
 
+  /** Create an issue and return its id/key. */
+  async createIssue(input: {
+    projectKey: string;
+    issueType: string;
+    summary: string;
+    description: string;
+    labels?: string[];
+  }): Promise<{ id: string; key: string }> {
+    const body = {
+      fields: {
+        project: { key: input.projectKey },
+        issuetype: { name: input.issueType },
+        summary: input.summary,
+        description: adfParagraph(input.description),
+        labels: input.labels ?? [],
+      },
+    };
+    return (await this.http.request('POST', '/rest/api/3/issue', body)) as { id: string; key: string };
+  }
+
   async addComment(issueId: string, text: string): Promise<void> {
-    await this.request('POST', `/rest/api/3/issue/${issueId}/comment`, {
+    await this.http.request('POST', `/rest/api/3/issue/${issueId}/comment`, {
       body: adfParagraph(text),
     });
   }
@@ -75,43 +100,29 @@ export class JiraClient {
       ...remove.map((value) => ({ remove: value })),
     ];
     if (labels.length === 0) return;
-    await this.request('PUT', `/rest/api/3/issue/${issueId}`, { update: { labels } });
+    await this.http.request('PUT', `/rest/api/3/issue/${issueId}`, { update: { labels } });
   }
 
-  /** Transition an issue to a target status by name. No-op if already there. */
-  async transition(issueId: string, targetStatusName: string): Promise<void> {
-    const result = (await this.request('GET', `/rest/api/3/issue/${issueId}/transitions`)) as {
+  /**
+   * Transition an issue to the first of `candidates` that is an available
+   * transition on its board. No-op if none of the candidates apply (so a
+   * column that doesn't exist on this board is simply skipped).
+   */
+  async transition(issueId: string, candidates: string[]): Promise<void> {
+    if (candidates.length === 0) return;
+    const result = (await this.http.request('GET', `/rest/api/3/issue/${issueId}/transitions`)) as {
       transitions?: JiraTransition[];
     };
-    const match = (result.transitions ?? []).find(
-      (t) => t.to?.name === targetStatusName || t.name === targetStatusName,
-    );
-    if (!match) {
-      throw new Error(`No JIRA transition to "${targetStatusName}" for issue ${issueId}`);
+    const available = result.transitions ?? [];
+    for (const target of candidates) {
+      const match = available.find((t) => t.to?.name === target || t.name === target);
+      if (match) {
+        await this.http.request('POST', `/rest/api/3/issue/${issueId}/transitions`, {
+          transition: { id: match.id },
+        });
+        return;
+      }
     }
-    await this.request('POST', `/rest/api/3/issue/${issueId}/transitions`, {
-      transition: { id: match.id },
-    });
-  }
-
-  private async request(method: string, path: string, body?: unknown): Promise<unknown> {
-    const headers: Record<string, string> = { Accept: 'application/json' };
-    if (this.authHeader) headers.Authorization = this.authHeader;
-    if (body !== undefined) headers['Content-Type'] = 'application/json';
-
-    const response = await this.fetchFn(`${this.baseUrl}${path}`, {
-      method,
-      headers,
-      body: body === undefined ? undefined : JSON.stringify(body),
-    });
-
-    if (!response.ok) {
-      const text = await response.text().catch(() => '');
-      throw new Error(`JIRA ${method} ${path} failed: ${response.status} ${text}`);
-    }
-    if (response.status === 204) return undefined;
-    const text = await response.text();
-    return text ? JSON.parse(text) : undefined;
   }
 }
 

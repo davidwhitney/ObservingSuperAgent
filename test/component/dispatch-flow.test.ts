@@ -13,6 +13,19 @@ describe('orchestrator dispatch cycle', () => {
     expect(system.agent.dispatched.map((d) => d.repository)).toEqual(['acme/api', 'acme/web']);
   });
 
+  it('moves the card to the first acting column that exists on the board', async () => {
+    const tracker = new InMemoryWorkTrackingConnector({
+      actingColumn: ['Doing', 'In Progress'], // "Doing" not on this board
+      boardColumns: ['To Do', 'In Progress', 'In Review', 'Done'],
+    });
+    tracker.seed({ id: '1', projectId: 'ENG', title: 'thing', tags: ['agent-ready'], status: 'To Do' });
+    const system = buildTestSystem({ tracker, responder: planResponder(['acme/x']) });
+
+    await system.orchestrator.runDispatchCycle();
+
+    expect(system.tracker.get('1')!.status).toBe('In Progress');
+  });
+
   it('only selects items matching the ready tag or column', async () => {
     const tracker = new InMemoryWorkTrackingConnector({ readyColumns: ['Ready for Agent'] });
     tracker.seed({ id: 'a', projectId: 'ENG', title: 'tagged', tags: ['agent-ready'] });

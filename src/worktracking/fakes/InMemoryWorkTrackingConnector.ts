@@ -2,19 +2,18 @@ import type { WorkTrackingConnector } from '../WorkTrackingConnector';
 import type { LifecyclePolicy } from '../LifecyclePolicy';
 import type { ReadableWorkTracking } from '../ReadableWorkTracking';
 import type { Annotation, WorkItem, WorkItemRef } from '../../domain/types';
+import {
+  DEFAULT_LIFECYCLE_SETTINGS,
+  annotationForStage,
+  type LifecycleSettings,
+  type LifecycleStage,
+} from '../lifecycleAnnotations';
 
-export interface InMemoryWorkTrackingOptions {
+export type InMemoryWorkTrackingOptions = Partial<LifecycleSettings> & {
   name?: string;
-  readyTag?: string;
-  actingTag?: string;
-  completeTag?: string;
-  doneTag?: string;
-  rejectedTag?: string;
-  readyColumns?: string[];
-  actingColumn?: string;
-  completeColumn?: string;
-  doneColumn?: string;
-}
+  /** Columns that exist on this fake's board; transitions pick the first match. */
+  boardColumns?: string[];
+};
 
 /**
  * In-memory {@link WorkTrackingConnector} for component tests and fakes-first
@@ -28,27 +27,14 @@ export class InMemoryWorkTrackingConnector
   readonly name: string;
   readonly annotations: Array<{ ref: WorkItemRef; annotation: Annotation }> = [];
   private readonly items = new Map<string, WorkItem>();
-  private readonly readyTag: string;
-  private readonly actingTag: string;
-  private readonly completeTag: string;
-  private readonly doneTag: string | undefined;
-  private readonly rejectedTag: string;
-  private readonly readyColumns: string[];
-  private readonly actingColumn: string | undefined;
-  private readonly completeColumn: string | undefined;
-  private readonly doneColumn: string;
+  private readonly settings: LifecycleSettings;
+  private readonly boardColumns: string[] | undefined;
 
   constructor(options: InMemoryWorkTrackingOptions = {}) {
-    this.name = options.name ?? 'fake-tracker';
-    this.readyTag = options.readyTag ?? 'agent-ready';
-    this.actingTag = options.actingTag ?? 'agent-acting';
-    this.completeTag = options.completeTag ?? 'agent-complete';
-    this.doneTag = options.doneTag;
-    this.rejectedTag = options.rejectedTag ?? 'reviewer-rejected';
-    this.readyColumns = options.readyColumns ?? [];
-    this.actingColumn = options.actingColumn;
-    this.completeColumn = options.completeColumn;
-    this.doneColumn = options.doneColumn ?? 'Done';
+    const { name, boardColumns, ...settings } = options;
+    this.name = name ?? 'fake-tracker';
+    this.boardColumns = boardColumns;
+    this.settings = { ...DEFAULT_LIFECYCLE_SETTINGS, ...settings };
   }
 
   /** Add an item, defaulting connector/tags so tests can pass partial items. */
@@ -58,7 +44,7 @@ export class InMemoryWorkTrackingConnector
       key: item.key ?? item.id,
       url: item.url ?? `https://tracker.test/${item.id}`,
       description: item.description ?? '',
-      tags: item.tags ?? [this.readyTag],
+      tags: item.tags ?? [this.settings.readyTag],
       status: item.status ?? 'Ready',
       ...item,
     };
@@ -76,7 +62,8 @@ export class InMemoryWorkTrackingConnector
 
   async RetrieveWorkReadyForDispatch(): Promise<WorkItem[]> {
     return [...this.items.values()].filter(
-      (item) => item.tags.includes(this.readyTag) || this.readyColumns.includes(item.status),
+      (item) =>
+        item.tags.includes(this.settings.readyTag) || this.settings.readyColumns.includes(item.status),
     );
   }
 
@@ -89,41 +76,16 @@ export class InMemoryWorkTrackingConnector
     for (const tag of annotation.addTags ?? []) {
       if (!item.tags.includes(tag)) item.tags.push(tag);
     }
-    if (annotation.transitionTo) item.status = annotation.transitionTo;
+    if (annotation.transitionTo?.length) {
+      const target = this.boardColumns
+        ? annotation.transitionTo.find((c) => this.boardColumns!.includes(c))
+        : annotation.transitionTo[0];
+      if (target) item.status = target;
+    }
   }
 
-  dispatchAnnotationFor(_ref: WorkItemRef): Annotation {
-    const annotation: Annotation = {
-      removeTags: [this.readyTag],
-      addTags: [this.actingTag],
-    };
-    if (this.actingColumn) annotation.transitionTo = this.actingColumn;
-    return annotation;
-  }
-
-  completionAnnotationFor(_ref: WorkItemRef): Annotation {
-    const annotation: Annotation = {
-      removeTags: [this.readyTag, this.actingTag],
-      addTags: [this.completeTag],
-    };
-    if (this.completeColumn) annotation.transitionTo = this.completeColumn;
-    return annotation;
-  }
-
-  doneAnnotationFor(_ref: WorkItemRef): Annotation {
-    return {
-      removeTags: [this.readyTag, this.actingTag],
-      addTags: this.doneTag ? [this.doneTag] : [],
-      transitionTo: this.doneColumn,
-    };
-  }
-
-  rejectedAnnotationFor(_ref: WorkItemRef): Annotation {
-    return {
-      removeTags: [this.readyTag, this.actingTag],
-      addTags: [this.rejectedTag],
-      transitionTo: this.doneColumn,
-    };
+  annotationFor(_ref: WorkItemRef, stage: LifecycleStage): Annotation {
+    return annotationForStage(this.settings, stage);
   }
 
   /** All comments recorded across annotations, for assertions. */
